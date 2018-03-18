@@ -1,0 +1,7 @@
+*.o
+/storage
+/docs
+/make/*
+!/make/CMakeLists.txt
+/xcode
+/node_modules
