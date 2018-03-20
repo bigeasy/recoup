@@ -8,5 +8,5 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
     include(CodeCoverage)
     setup_target_for_coverage(
         NAME coverage
-        EXECUTABLE ../node_modules/.bin/proof test build/*_test)
+        EXECUTABLE build/start_test)
 endif(CMAKE_BUILD_TYPE MATCHES Debug)
