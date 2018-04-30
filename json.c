@@ -8,6 +8,10 @@
 
         * Create an interface for objects to integers.
         * Create a ring-buffer allocator.
+        * Think of way to simplify push.
+        * Objects as skip lists.
+        * Pack arrays with type elements and data elements.
+        * Define a way to extract to a structure, visit and populate.
  */
 void json_heap_initialize(json_heap_t* json_heap)
 {
@@ -33,12 +37,14 @@ void json_set_integer(json_t object, const char* key, uint32_t value)
 {
     json_entity_t* entity;
     if (object.entity->object.head == 0) {
+        json_reference_t reference = object.heap->block->top;
         entity = (json_entity_t*) (((uint64_t*) object.heap->block) + object.heap->block->top);
         object.heap->block->top += sizeof (json_entity_t) / sizeof (uint64_t);
         entity->type = Entry;
         entity->entry.key = object.heap->block->top;
         strcpy((char*) object.heap->block, key);
         entity->entry.value.integer = value;
+        object.entity->object.head = reference;
     }
 }
 
@@ -51,9 +57,10 @@ uint64_t* json_get_integer(json_t object, const char* key)
     if (object.entity->object.head == 0) {
         return NULL;
     }
-    char* existing_key = (char*) json_get_block(object.heap, object.entity->entry.key);
+    json_entity_t* entity = (json_entity_t*) json_get_block(object.heap, object.entity->entry.key);
+    char* existing_key = (char*) json_get_block(object.heap, entity->entry.key);
     if (strcmp(existing_key, key) == 0) {
-        return &object.entity->entry.value.integer;
+        return &entity->entry.value.integer;
     }
     return NULL;
 }

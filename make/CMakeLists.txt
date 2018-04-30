@@ -8,5 +8,5 @@ if(CMAKE_BUILD_TYPE MATCHES Debug)
     include(CodeCoverage)
     setup_target_for_coverage(
         NAME coverage
-        EXECUTABLE build/start_test)
+        EXECUTABLE build/json_test)
 endif(CMAKE_BUILD_TYPE MATCHES Debug)
