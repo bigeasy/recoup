@@ -1,4 +1,4 @@
-Cap'n JSON inspired binary protocol.
+Cap'n Protocol inspired binary JSON protocol.
 
 cd make && cmake -DCMAKE_BUILD_TYPE=Debug -G 'Unix Makefiles'
 
