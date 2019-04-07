@@ -1,0 +1,7 @@
+Wireguard based router for IoT hubs.
+
+cd make && cmake -DCMAKE_BUILD_TYPE=Debug -G 'Unix Makefiles'
+
+cd make && make coverage && open coverage/index.html
+
+cd xcode && cmake -G Xcode

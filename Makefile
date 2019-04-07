@@ -12,6 +12,7 @@ xcode/CMakeLists.txt: CMakeLists.xcode.txt
 	@cp $< $@
 	@echo 'Now you should:'
 	@echo 'cd xcode && cmake -G Xcode'
+	cd xcode && cmake -G Xcode
 
 node_modules/.bin/proof:
 	mkdir node_modules
