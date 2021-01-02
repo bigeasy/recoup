@@ -1,7 +1,11 @@
 #include "json.h"
 
+#include <stdarg.h>
 #include <memory.h>
 #include <string.h>
+#include <stdio.h>
+#include <stddef.h>
+#include <assert.h>
 
 /*
     Baby steps:
@@ -13,54 +17,367 @@
         * Pack arrays with type elements and data elements.
         * Define a way to extract to a structure, visit and populate.
  */
-void json_heap_initialize(json_heap_t* json_heap)
-{
-     json_heap->block = malloc(1024);
-     json_heap->_next_id = 0;
-     json_heap->block->id = json_heap->_next_id++;
-     json_heap->block->size = 1024 / sizeof(uint64_t);
-     json_heap->block->top = sizeof(json_heap_block_t);
+
+static uint32_t wordsof (uint32_t bytes) {
+    assert(bytes % sizeof(uint64_t) == 0);
+    return bytes / sizeof(uint64_t);
 }
 
-json_t json_create_object(json_heap_t* json_heap)
+void json_heap_init(json_heap_t* heap, void* memory, size_t length)
 {
-    json_entity_t* entity = (json_entity_t*) (((uint8_t*) json_heap->block) + json_heap->block->top);
-    json_reference_t address = json_heap->block->top;
-    json_heap->block->top += sizeof(json_entity_t);
-    entity->type = Object;
-    entity->object.head = 0;
-    entity->object.size = sizeof(json_entity_t);
-    return (json_t) { .heap = json_heap, .address = address, .entity = entity };
+    uint32_t words = wordsof(length);
+    heap->header = (json_heap_header_t*) memory;
+    heap->memory = (uint64_t*) memory;
+    heap->header->top = wordsof(sizeof(json_heap_header_t));
+    heap->header->bottom = heap->header->length = words;
+    json_node_t* root = (json_node_t*) heap->memory + heap->header->top;
+    heap->header->top += wordsof(sizeof(json_node_t));
+    root->type = Object;
+    root->header.next = 0;
+    root->value.object.head = 0;
 }
 
-void json_set_integer(json_t object, const char* key, uint32_t value)
+static int has_reference (json_heap_t* heap, json_t* ref)
 {
-    json_entity_t* entity;
-    if (object.entity->object.head == 0) {
-        json_reference_t reference = object.heap->block->top;
-        entity = (json_entity_t*) (((uint64_t*) object.heap->block) + object.heap->block->top);
-        object.heap->block->top += sizeof (json_entity_t) / sizeof (uint64_t);
-        entity->type = Entry;
-        entity->entry.key = object.heap->block->top;
-        strcpy((char*) object.heap->block, key);
-        entity->entry.value.integer = value;
-        object.entity->object.head = reference;
+    json_t* iterator;
+    iterator = heap->refs;
+    while (iterator != NULL) {
+        if (iterator == ref) {
+            return 1;
+        }
+        iterator = iterator->next;
+    }
+    return 0;
+}
+
+static void join_ref (json_heap_t* heap, json_t* ref)
+{
+    if (! has_reference(heap, ref)) {
+        ref->next = heap->refs;
+        heap->refs = ref;
     }
 }
 
-void* json_get_block(json_heap_t* heap, uint64_t location) {
-    return heap->block + location;
+void json_root (json_heap_t* heap, json_t* ref)
+{
+    join_ref(heap, ref);
+    ref->heap = heap;
+    ref->offset = wordsof(sizeof(json_heap_header_t));
 }
 
-uint64_t* json_get_integer(json_t object, const char* key)
+static uint32_t json_alloc_node (json_heap_t* heap)
 {
-    if (object.entity->object.head == 0) {
-        return NULL;
+    const uint32_t allocated = heap->header->top;
+    heap->header->top += 2;
+    return allocated;
+}
+
+static json_node_t* json_dereference (json_heap_t* heap, uint32_t offset) {
+    const uint8_t* memory = (uint8_t*) heap->header;
+    return (json_node_t*) (memory + (offset * sizeof(uint64_t)));
+}
+
+typedef struct json_region_s json_region_t;
+
+struct json_region_s
+{
+    uint32_t referrer;
+    uint32_t length;
+};
+
+static int json_get_region (json_heap_t* heap, uint32_t offset, json_region_t** region) {
+    const uint8_t* memory = (uint8_t*) heap->header;
+    *region = (json_region_t*) (memory + (offset * sizeof(uint64_t)));
+    return 0;
+}
+
+static void* json_get_region_buffer (json_region_t* region) {
+    return ((uint8_t*) region) + sizeof(json_region_t);
+}
+
+static uint32_t json_word_length (uint32_t length) {
+    return length + (sizeof(uint64_t) - 1) / sizeof(uint64_t);
+}
+
+void json_create_object (json_t* ref, const char* name)
+{
+    json_node_t* object = json_dereference(ref->heap, ref->offset);
+
+    assert(object->type == Object);
+
+    uint32_t offset = object->value.object.head;
+    json_node_t* previous = NULL;
+    while (ref->offset != offset) {
+        assert(0);
     }
-    json_entity_t* entity = (json_entity_t*) json_get_block(object.heap, object.entity->entry.key);
-    char* existing_key = (char*) json_get_block(object.heap, entity->entry.key);
-    if (strcmp(existing_key, key) == 0) {
-        return &entity->entry.value.integer;
+
+    const uint8_t key_offset = json_alloc_node(ref->heap);
+    json_node_t* key = json_dereference(ref->heap, key_offset);
+
+    if (previous == NULL) {
+        key->header.next = ref->offset;
+        object->value.object.head = key_offset;
+    } else {
     }
-    return NULL;
+
+    {
+        const size_t length = strlen(name);
+        const uint32_t words = json_word_length(length) + sizeof(json_region_t) / sizeof(uint64_t);
+        const uint32_t region_offset = ref->heap->header->bottom -= words;
+        json_region_t* region;
+        json_get_region(ref->heap, region_offset, &region);
+        region->referrer = key_offset;
+        region->length = length;
+        char* value = json_get_region_buffer(region);
+        strcpy(value, name);
+        key->value.key.string = region_offset;
+    }
+
+    const uint8_t object_offset = json_alloc_node(ref->heap);
+    json_node_t* new_object = json_dereference(ref->heap, object_offset);
+
+    new_object->type = Object;
+    new_object->value.object.head = new_object->header.next = object_offset;
+
+    new_object->header.next = key->header.next;
+    key->header.next = object_offset;
+}
+
+static void json_unlink_ref (json_t* ref) {
+    json_t* iterator = ref->heap->refs, *previous = NULL;
+    while (iterator != ref) {
+        assert(iterator != NULL);
+        previous = iterator;
+        iterator = iterator->next;
+    }
+    if (previous == NULL) {
+        ref->heap->refs = iterator->next;
+    } else {
+        previous->next = iterator->next;
+    }
+}
+
+static int json_get_node(json_heap_t* heap, uint32_t offset, json_node_t** node)
+{
+    *node = (json_node_t*) heap + offset;
+    return 0;
+}
+
+static int json_get_property (
+    json_heap_t* heap, const json_node_t* object, const char* name,
+    uint32_t* referrer_offset, uint32_t* found_offset
+) {
+    int err;
+    uint32_t key_offset;
+    *found_offset = 0;
+    json_node_t* iterator;
+    err = json_get_node(heap, object->value.object.head, &iterator);
+    if (err != 0) {
+        return err;
+    }
+    *referrer_offset = object->value.object.head;
+    while (iterator != object) {
+        json_region_t* region;
+        err = json_get_region(heap, iterator->value.key.string, &region);
+        if (err != 0) {
+            return err;
+        }
+        const char* current_name = json_get_region_buffer(region);
+        int compare = strcmp(name, current_name);
+        if (compare == 0) {
+            *found_offset = key_offset;
+        } else if (compare > 0) {
+            break;
+        } else {
+            *referrer_offset = iterator->header.next;
+            err = json_get_node(heap, iterator->header.next, &iterator);
+            if (err != 0) {
+                return err;
+            }
+            key_offset = iterator->header.next;
+            err = json_get_node(heap, iterator->header.next, &iterator);
+            if (err != 0) {
+                return err;
+            }
+        }
+    }
+    return 0;
+}
+
+static int json_get_path (json_heap_t* heap, json_node_t* object, uint32_t* offset, va_list ap)
+{
+    int err;
+
+    uint32_t referrer_offset;
+    uint32_t child_offset;
+
+    json_node_t* parent = object;
+    json_node_t* child;
+
+    *offset = 0;
+
+    const char* name;
+
+    for (;;) {
+        name = va_arg(ap, const char*);
+        if (name == NULL || child == NULL) {
+            break;
+        }
+        parent = child;
+        err = json_get_property(heap, parent, name, &referrer_offset, &child_offset);
+        if (err != 0) {
+            break;
+        }
+        if (child_offset != 0) {
+            json_get_node(heap, child_offset, &child);
+        } else {
+            child = NULL;
+        }
+    }
+
+    if (err != 0 || child == NULL) {
+        return err;
+    }
+
+    *offset = child_offset;
+
+    return 0;
+}
+
+// In order to reduce the amount of error validation, we only ever return a
+// value if it is valid...
+
+// We can break most iteration by returning null. If we encounter an error
+// durring deferencing, we can leave an error in `heap`.
+
+int json_get_object (json_t* object, json_t* result, ...)
+{
+    int err;
+
+    json_heap_t* heap = object->heap;
+    json_node_t* parent;
+    json_node_t* child;
+    uint32_t child_offset = 0;
+    uint32_t referrer_offset = 0;
+
+    join_ref(object->heap, result);
+    result->offset = 0;
+
+    err = json_get_node(object->heap, object->offset, &parent);
+    if (err != 0) {
+        return err;
+    }
+
+    const char* name;
+    va_list ap;
+    va_start(ap, result);
+
+    for (;;) {
+        name = va_arg(ap, const char*);
+        if (name == NULL || child == NULL) {
+            break;
+        }
+        parent = child;
+        err = json_get_property(heap, parent, name, &referrer_offset, &child_offset);
+        if (err != 0) {
+            break;
+        }
+        if (child_offset != 0) {
+            json_get_node(heap, child_offset, &child);
+        } else {
+            child = NULL;
+        }
+    }
+
+    va_end(ap);
+
+    if (err != 0) {
+        return err;
+    }
+
+    if (child == NULL) {
+        return 0;
+    }
+
+    json_node_t* value;
+    err = json_get_node(heap, child->header.next, &value);
+
+    if (value->type != Object) {
+        return 0;
+    }
+
+    result->offset = child_offset;
+
+    return 0;
+}
+
+int json_set_number (json_t* object, const char* name, double number)
+{
+    json_heap_t* heap = object->heap;
+    json_node_t* object_node;
+    json_get_node(heap, object->offset, &object_node);
+    uint32_t referrer_offset, key_offset;
+    json_get_property(heap, object_node, name, &referrer_offset, &key_offset);
+    json_node_t* referrer;
+    json_get_node(heap, referrer_offset, &referrer);
+    if (key_offset != 0) {
+    } else {
+        // **TODO** json_can_alloc(2) so we don't have trouble releasing.
+        uint32_t key_offset = json_alloc_node(heap);
+        json_node_t* key;
+        json_get_node(heap, key_offset, &key);
+        uint32_t value_offset = json_alloc_node(heap);
+        json_node_t* value;
+        json_get_node(heap, value_offset, &value);
+        key->header.next = value_offset;
+        value->value.number = number;
+        if (referrer->type == Key) {
+        } else if (referrer->type == Object) {
+            value->header.next = object_node->value.object.head;
+            object_node->value.object.head = key_offset;
+        }
+    }
+    return 0;
+}
+
+json_number_t json_get_number (json_t* object, ...)
+{
+    int err = 0;
+    double number = 0;
+
+    uint32_t key_offset = 0;
+
+    json_heap_t* heap = object->heap;
+
+    json_node_t* object_node;
+    err = json_get_node(heap, object->offset, &object_node);
+    if (err != 0) {
+        goto exit;
+    }
+
+    va_list ap;
+    va_start(ap, object);
+    json_get_path(heap, object_node, &key_offset, ap);
+    va_end(ap);
+
+    if (key_offset == 0) {
+        err = -1;
+        goto exit;
+    }
+
+    json_node_t* key_node;
+    json_get_node(heap, key_offset, &key_node);
+
+    json_node_t* value_node;
+    json_get_node(heap, key_node->header.next, &value_node);
+
+    if (value_node->type != Number) {
+        err = -1;
+        goto exit;
+    }
+
+    number = value_node->value.number;
+
+exit:
+    return (json_number_t) { .err = err, .number = number };
 }
