@@ -5,3 +5,4 @@
 !/make/CMakeLists.txt
 /xcode
 /node_modules
+/build

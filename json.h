@@ -4,42 +4,22 @@ typedef struct json_heap_s json_heap_t;
 typedef struct json_heap_header_s json_heap_header_t;
 typedef struct json_heap_s json_heap_t;
 typedef struct json_s json_t;
-typedef struct json_node_s json_node_t;
 typedef struct json_heap_block_s json_heap_block_t;
 typedef struct json_s json_t;
 typedef struct json_number_s json_number_t;
 
-enum json_node_type
-{
-    End, Object, Key, Entry, Array, Element, String, Float, Integer, Boolean, Null, Number,
-    JSON_STRING,
-    JSON_NUMBER,
-    JSON_OBJECT,
-    JSON_ARRAY,
-    JSON_NULL,
-    JSON_BOOLEAN,
-    JSON_END,
-    JSON_KEY,
-    JSON_INTEGER
-};
-
-struct json_node_s
-{
-    enum json_node_type type;
-    union {
-        uint32_t next;
-    } header;
-    union {
-        struct {
-            uint32_t head;
-        } object;
-        struct {
-            uint32_t next;
-            uint32_t string;
-        } key;
-        double number;
-    } value;
-};
+#define JSON_END 0
+#define JSON_NULL 1
+#define JSON_OBJECT 2
+#define JSON_ARRAY 3
+#define JSON_KEY 4
+#define JSON_BOOLEAN 5
+#define JSON_NUMBER 6
+#define JSON_STRING 7
+#define JSON_FREE_LIST 8
+#define JSON_STACK 9
+#define JSON_ALLOC_NODE 10
+#define JSON_ALLOC_REGION 11
 
 struct json_heap_header_s
 {
@@ -72,7 +52,7 @@ struct json_number_s
 typedef struct object_s object_t;
 struct property_s
 {
-    enum json_node_type type;
+    uint32_t type;
     const char* key;
     union {
         double number;
@@ -89,11 +69,17 @@ struct object_s
 
 
 void json_heap_init(json_heap_t* json_heap, void* memory, size_t length);
+
+void json_heap_copacetic(json_heap_t* json_heap);
+
 void json_root(json_heap_t*, json_t*);
-void json_create_object(json_t*, const char*);
+
+int json_set_object(json_t*, const char*);
 
 int json_set_number(json_t* object, const char* name, double number);
 
-void json_set_integer(json_t, const char*, uint32_t);
+int json_set_string(json_t*, const char*, const char*);
+
 json_number_t json_get_number(json_t*, ...);
+
 int json_get_object (json_t* object, json_t* result, ...);
