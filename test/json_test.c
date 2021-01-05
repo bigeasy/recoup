@@ -106,7 +106,7 @@ static json_variant_t* redux = (json_variant_t[]) {
 
 int main()
 {
-    plan(1);
+    plan(4);
 
     const json_variant_t* copy = redux;
 
@@ -121,10 +121,7 @@ int main()
 
     json_get_object(&root, &object, "object", NULL);
 
-    int err = json_set_number(&object, "number", 1);
-    if (err != 0) {
-        return 1;
-    }
+    ok(json_set_number(&object, "number", 1) == 0, "set number");
 
     // Assume it is easier to check before you proceed, so all the gets will
     // assert on type, no coercion, so you must check types before you
@@ -134,10 +131,7 @@ int main()
 
     ok(number == 1, "set and get number");
 
-    err = json_set_string(&object, "string", "hello, world");
-    if (err != 0) {
-        return 1;
-    }
+    ok(json_set_string(&object, "string", "hello, world") == 0, "set string");
 
     json_t string;
     json_get_string(&object, &string, "string", NULL);

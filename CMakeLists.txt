@@ -1,8 +1,13 @@
 project(cjson)
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build")
+
 cmake_minimum_required (VERSION 3.19)
-include(common.cmake)
+
+add_library(json STATIC ../json.c)
+
+add_subdirectory(test)
+
 if(CJSON_COVERAGE)
     message("adding coverage ${CJSON_COVERAGE}")
     if(CMAKE_BUILD_TYPE MATCHES Debug)
