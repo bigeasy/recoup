@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include "ok.h"
 #include "json.h"
 #include <string.h>
@@ -112,8 +113,8 @@ int main()
 
     char memory[1024 * 1024];
     json_heap_t heap;
-    json_t root;
-    json_t object;
+    json_t root = {};
+    json_t object = {};
 
     json_heap_init(&heap, memory, sizeof(memory));
     json_root(&heap, &root);

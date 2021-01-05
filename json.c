@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 #include "json.h"
 
 #include <stdarg.h>
@@ -101,6 +103,7 @@ void json_heap_init(json_heap_t* heap, void* memory, size_t length)
     uint32_t words = wordsof(length);
     heap->header = (json_heap_header_t*) memory;
     heap->memory = (uint64_t*) memory;
+    heap->refs = NULL;
     heap->header->top = wordsof(sizeof(json_heap_header_t));
     heap->header->bottom = heap->header->length = words;
 
@@ -127,8 +130,7 @@ void json_heap_init(json_heap_t* heap, void* memory, size_t length)
 
 static int has_reference (json_heap_t* heap, json_t* ref)
 {
-    json_t* iterator;
-    iterator = heap->refs;
+    json_t* iterator = heap->refs;
     while (iterator != NULL) {
         if (iterator == ref) {
             return 1;
