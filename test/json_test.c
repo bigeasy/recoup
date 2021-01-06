@@ -2,6 +2,7 @@
 #include "ok.h"
 #include "json.h"
 #include <string.h>
+#include <stdio.h>
 
 #define json_template(_properties)          \
     (object_t[]) {{                         \
@@ -107,7 +108,7 @@ static json_variant_t* redux = (json_variant_t[]) {
 
 int main()
 {
-    plan(4);
+    plan(5);
 
     const json_variant_t* copy = redux;
 
@@ -118,7 +119,7 @@ int main()
 
     json_heap_init(&heap, memory, sizeof(memory));
     json_root(&heap, &root);
-    json_set_object(&root, "object");
+    ok(json_set_object(&root, "object") == 0, "set object");
 
     json_get_object(&root, &object, "object", NULL);
 

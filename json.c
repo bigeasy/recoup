@@ -5,7 +5,6 @@
 #include <stdarg.h>
 #include <memory.h>
 #include <string.h>
-#include <stdio.h>
 #include <stddef.h>
 #include <assert.h>
 
@@ -13,7 +12,7 @@ typedef struct json_node_s json_node_t;
 
 struct json_node_s
 {
-    uint32_t type_;
+    uint32_t packed;
     uint32_t next;
     union {
         struct {
@@ -31,8 +30,44 @@ struct json_node_s
             uint32_t bytes;
         } alloc;
         double number;
+        uint64_t integer;
     } value;
 };
+
+#define json_set_node_type(node, value) (json_set_node_packed_field(node, 27, 5, value))
+#define json_get_node_type(node) (json_get_node_packed_field(node, 27, 5))
+#define json_set_node_alloc_failure(node, value) (json_set_node_packed_field(node, 26, 1, value))
+#define json_get_node_alloc_failure(node) (json_get_node_packed_field(node, 26, 1))
+
+// Debugger steppable for now, inline function later.
+
+//
+static uint32_t json_bit_field_set (uint32_t ui, uint32_t offset, uint32_t bits, uint32_t value)
+{
+    uint32_t mask = 0Xffffffff;
+    mask = mask >> (32 - bits);
+    mask = mask << offset;
+    ui = ui & ~mask;
+    value = value << offset;
+    return ui | value;
+}
+
+static uint32_t json_bit_field_get (uint32_t ui, uint32_t offset, uint32_t bits)
+{
+    uint32_t mask = 0Xffffffff;
+    mask = mask >> (32 - bits);
+    return (ui >> offset) & mask;
+}
+
+static void json_set_node_packed_field (json_node_t* node, uint32_t offset, uint32_t bits, uint32_t value)
+{
+    node->packed = json_bit_field_set(node->packed, offset, bits, value);
+}
+
+static uint32_t json_get_node_packed_field (json_node_t* node, uint32_t offset, uint32_t bits)
+{
+    return json_bit_field_get(node->packed, offset, bits);
+}
 
 /*
     Baby steps:
@@ -46,16 +81,6 @@ struct json_node_s
 
 typedef struct json_region_s json_region_t;
 
-static uint8_t json_get_type (json_node_t* node)
-{
-    return node->type_;
-}
-
-static void json_set_type (json_node_t* node, uint8_t type)
-{
-    node->type_ = type;
-}
-
 struct json_region_s
 {
     uint32_t referrer;
@@ -67,16 +92,20 @@ static uint32_t wordsof (uint32_t bytes) {
     return bytes / sizeof(uint64_t);
 }
 
+static json_node_t* json_get_node_ (json_heap_t* heap, uint32_t offset)
+{
+    return (json_node_t*) (heap->memory + offset);
+}
+
 static uint32_t json_alloc_node (json_heap_t* heap)
 {
     const uint32_t allocated = heap->header->top;
     heap->header->top += 2;
+    json_node_t* node = json_get_node_(heap, allocated);
+    node->packed = 0;
+    node->next = 0;
+    node->value.integer = 0;
     return allocated;
-}
-
-static json_node_t* json_get_node_ (json_heap_t* heap, uint32_t offset)
-{
-    return (json_node_t*) (heap->memory + offset);
 }
 
 static uint32_t json_get_node_offset (json_heap_t* heap, json_node_t* node)
@@ -90,7 +119,7 @@ static json_node_t* json_get_system_node (json_heap_t* heap, uint32_t type)
 
     json_node_t* node = json_get_node_(heap, root_offset);
 
-    while (json_get_type(node) != type) {
+    while (json_get_node_type(node) != type) {
         node = json_get_node_(heap, node->next);
     }
 
@@ -115,14 +144,14 @@ void json_heap_init(json_heap_t* heap, void* memory, size_t length)
     uint32_t stack_offset = json_alloc_node(heap);
     json_node_t* stack = json_get_node_(heap, stack_offset);
 
-    json_set_type(root, JSON_OBJECT);
+    json_set_node_type(root, JSON_OBJECT);
     root->next = free_list_offset;
     root->value.list.head = root_offset;
 
-    json_set_type(free_list, JSON_FREE_LIST);
+    json_set_node_type(free_list, JSON_FREE_LIST);
     free_list->next = stack_offset;
 
-    json_set_type(stack, JSON_STACK);
+    json_set_node_type(stack, JSON_STACK);
     stack->next = root_offset;
     stack->value.list.head = stack_offset;
 }
@@ -174,19 +203,6 @@ static int json_alloc_region (json_heap_t* heap, uint32_t referrer_offset, uint3
     return region_offset;
 }
 
-static uint32_t json_alloc_stack (json_heap_t* heap) {
-    uint32_t stack_offset;
-    uint32_t root_offset = wordsof(sizeof(json_heap_header_t));
-
-    json_node_t* stack = json_get_node_(heap, root_offset);
-
-    while (json_get_type(stack) != JSON_STACK) {
-        stack = json_get_node_(heap, stack->next);
-    }
-
-    return 0;
-}
-
 static void json_list_link (json_heap_t* heap, json_node_t* list, json_node_t* node)
 {
     node->next = list->value.list.head;
@@ -200,8 +216,11 @@ static json_node_t* json_alloc_push (json_heap_t* heap) {
     const uint32_t node_offset = heap->header->top;
     heap->header->top += wordsof(sizeof(json_node_t));
 
+    json_set_node_alloc_failure(alloc, 0);
+
     json_node_t* node = json_get_node_(heap, node_offset);
-    json_set_type(node, JSON_ALLOC_NODE);
+    node->packed = 0;
+    json_set_node_type(node, JSON_ALLOC_NODE);
     node->value.alloc.offset = 0;
     node->value.alloc.bytes = 0;
 
@@ -218,8 +237,15 @@ static void json_alloc_push_node (json_heap_t* heap)
 static void json_alloc_push_region (json_heap_t* heap, uint32_t bytes)
 {
     json_node_t* node = json_alloc_push(heap);
-    json_set_type(node, JSON_ALLOC_REGION);
-    node->value.alloc.bytes = bytes;
+    if (node != NULL) {
+        node->value.alloc.bytes = bytes;
+        node->value.alloc.offset = json_alloc_region(heap, json_get_node_offset(heap, node), node->value.alloc.bytes);
+        if (node->value.alloc.offset == 0) {
+            uint32_t alloc_offset = json_get_system_node(heap, JSON_FREE_LIST)->next;
+            json_node_t* alloc = json_get_node_(heap, alloc_offset);
+            json_set_node_alloc_failure(alloc, 1);
+        }
+    }
 }
 
 static void json_free_node (json_heap_t* heap, json_node_t* node)
@@ -251,18 +277,6 @@ static void json_alloc_unwind (json_heap_t* heap)
         free_list->value.list.head = top_offset;
         stack->value.list.head = next_offset;
     }
-}
-
-static json_node_t* json_stack_init (json_heap_t* heap, uint32_t stack_offset)
-{
-    json_node_t* stack = json_get_system_node(heap, JSON_STACK);
-    json_node_t* new_stack = json_get_node_(heap, stack_offset);
-
-    new_stack->value.list.head = stack_offset;
-    new_stack->next = stack->next;
-    stack->next = stack_offset;
-
-    return new_stack;
 }
 
 typedef struct json_pop_s json_pop_t;
@@ -297,52 +311,26 @@ static void json_list_unlink (json_heap_t* heap, json_node_t* list, json_node_t*
     }
 }
 
-static uint32_t json_alloc (json_heap_t* heap)
+static int json_alloc (json_heap_t* heap)
 {
-    json_node_t* frame = json_alloc_push(heap);
-    if (frame == NULL) {
-        // **TODO** Declarations can have a parent pointer.
-        json_alloc_unwind(heap);
-        return 0;
-    }
-
     uint32_t alloc_offset = json_get_system_node(heap, JSON_FREE_LIST)->next;
     json_node_t* alloc = json_get_node_(heap, alloc_offset);
 
-    uint32_t stack_offset = alloc->value.list.head;
-    json_node_t* stack = json_get_node_(heap, stack_offset);
-    json_list_unlink(heap, alloc, stack);
-
-    json_set_type(stack, JSON_STACK);
-    stack->next = alloc->next;
-    alloc->next = stack->value.list.head = json_get_node_offset(heap, stack);
-
-    while (alloc->value.list.head != alloc_offset) {
-        uint32_t offset = alloc->value.list.head;
-        json_node_t* node = json_get_node_(heap, offset);
-        json_list_unlink(heap, alloc, node);
-        json_list_link(heap, stack, node);
-        if (json_get_type(node) == JSON_ALLOC_REGION) {
-            node->value.alloc.offset = json_alloc_region(heap, offset, node->value.alloc.bytes);
-            if (node->value.alloc.offset == 0) {
-                goto error;
-            }
-        }
+    if (json_get_node_alloc_failure(alloc)) {
+        // **TODO** Unwind.
+        return 0;
     }
 
-    return stack_offset;
-
-error:
-    // json_stack_unwind(heap, result_stack);
-
-    json_alloc_unwind(heap);
-
-    return 0;
+    return 1;
 }
 
-static uint32_t json_alloc_pop (json_heap_t* heap, json_node_t* stack)
+static json_node_t* json_alloc_pop (json_heap_t* heap)
 {
-    return 0;
+    uint32_t alloc_offset = json_get_system_node(heap, JSON_FREE_LIST)->next;
+    json_node_t* alloc = json_get_node_(heap, alloc_offset);
+    json_node_t* top = json_list_pop(heap, alloc);
+    top->packed = 0;
+    return top;
 }
 
 static uint32_t json_alloc_free (json_heap_t* heap, uint32_t stack_offset)
@@ -417,10 +405,10 @@ static void json_set_property_ (json_heap_t* heap, json_node_t* object, json_nod
     }
 }
 
-static json_node_t* json_construct_key (json_heap_t* heap, json_node_t* alloc, const char* name, json_node_t* value)
+static json_node_t* json_construct_key (json_heap_t* heap, const char* name, json_node_t* value)
 {
-    json_node_t* key = json_list_pop(heap, alloc);
-    json_set_type(key, JSON_KEY);
+    json_node_t* key = json_alloc_pop(heap);
+    json_set_node_type(key, JSON_KEY);
 
     key->next = json_get_node_offset(heap, value);
 
@@ -434,23 +422,20 @@ static int json_set_object_ (json_heap_t* heap, uint32_t object_offset, const ch
 {
     json_node_t* object = json_get_node_(heap, object_offset);
 
-    assert(json_get_type(object) == JSON_OBJECT);
+    assert(json_get_node_type(object) == JSON_OBJECT);
 
-    json_alloc_push_node(heap);
     json_alloc_push_region(heap, strlen(name));
+    json_alloc_push_node(heap);
 
-    uint32_t alloc_offset = json_alloc(heap);
-    if (alloc_offset == 0) {
+    if (!json_alloc(heap)) {
         return 1;
     }
 
-    json_node_t* alloc = json_get_node_(heap, alloc_offset);
-
-    json_node_t* value = json_list_pop(heap, alloc);
-    json_set_type(value, JSON_OBJECT);
+    json_node_t* value = json_alloc_pop(heap);
+    json_set_node_type(value, JSON_OBJECT);
     value->value.list.head = value->next = json_get_node_offset(heap, value);
 
-    json_node_t* key = json_construct_key(heap, alloc, name, value);
+    json_node_t* key = json_construct_key(heap, name, value);
 
     json_set_property_(heap, object, key);
 
@@ -541,7 +526,7 @@ int json_get_object (json_t* object, json_t* result, ...)
 
     json_node_t* value = json_get_node_(heap, key->next);
 
-    if (json_get_type(value) != JSON_OBJECT) {
+    if (json_get_node_type(value) != JSON_OBJECT) {
         return 0;
     }
 
@@ -554,23 +539,20 @@ static int json_set_number_ (json_heap_t* heap, uint32_t object_offset, const ch
 {
     json_node_t* object = json_get_node_(heap, object_offset);
 
-    assert(json_get_type(object) == JSON_OBJECT);
+    assert(json_get_node_type(object) == JSON_OBJECT);
 
-    json_alloc_push_node(heap);
     json_alloc_push_region(heap, strlen(name));
+    json_alloc_push_node(heap);
 
-    uint32_t alloc_offset = json_alloc(heap);
-    if (alloc_offset == 0) {
+    if (!json_alloc(heap)) {
         return 1;
     }
 
-    json_node_t* alloc = json_get_node_(heap, alloc_offset);
-
-    json_node_t* value = json_list_pop(heap, alloc);
-    json_set_type(value, JSON_NUMBER);
+    json_node_t* value = json_alloc_pop(heap);
+    json_set_node_type(value, JSON_NUMBER);
     value->value.number = number;
 
-    json_node_t* key = json_construct_key(heap, alloc, name, value);
+    json_node_t* key = json_construct_key(heap, name, value);
 
     json_set_property_(heap, object, key);
 
@@ -605,7 +587,7 @@ json_number_t json_get_number (json_t* object, ...)
 
     json_node_t* value_node = json_get_node_(heap, key_node->next);
 
-    if (json_get_type(value_node) != JSON_NUMBER) {
+    if (json_get_node_type(value_node) != JSON_NUMBER) {
         err = -1;
         goto exit;
     }
@@ -620,25 +602,22 @@ static int json_set_string_ (json_heap_t* heap, uint32_t object_offset, const ch
 {
     json_node_t* object = json_get_node_(heap, object_offset);
 
-    assert(json_get_type(object) == JSON_OBJECT);
+    assert(json_get_node_type(object) == JSON_OBJECT);
 
-    json_alloc_push_region(heap, strlen(string));
     json_alloc_push_region(heap, strlen(name));
+    json_alloc_push_region(heap, strlen(string));
 
-    uint32_t alloc_offset = json_alloc(heap);
-    if (alloc_offset == 0) {
+    if (!json_alloc(heap)) {
         return 1;
     }
 
-    json_node_t* alloc = json_get_node_(heap, alloc_offset);
-
-    // **TODO** Assert taht the list is empty, dealloc pop list.
-    json_node_t* value = json_list_pop(heap, alloc);
-    json_set_type(value, JSON_STRING);
+    // **TODO** Assert that the list is empty, dealloc pop list.
+    json_node_t* value = json_alloc_pop(heap);
+    json_set_node_type(value, JSON_STRING);
     json_region_t* region = json_get_region_(heap, value->value.ref.offset);
     strcpy(json_get_buffer(region), string);
 
-    json_node_t* key = json_construct_key(heap, alloc, name, value);
+    json_node_t* key = json_construct_key(heap, name, value);
 
     value->value.ref.previous = json_get_node_offset(heap, key);
 
@@ -677,7 +656,9 @@ void json_get_string (json_t* object, json_t* ref, ...)
     json_node_t* value = json_get_node_(heap, key->next);
 
     // **TODO** Do we coerce the way JSON does?
-    if (json_get_type(value) != JSON_STRING) {
+    uint32_t field = 0;
+    field = json_bit_field_set(field, 27, 5, 4);
+    if (json_get_node_type(value) != JSON_STRING) {
         return;
     }
 
@@ -689,7 +670,7 @@ void json_get_string (json_t* object, json_t* ref, ...)
 const char* _json_string (json_heap_t* heap, uint32_t string_offset)
 {
     json_node_t* value = json_get_node_(heap, string_offset);
-    assert(json_get_type(value) == JSON_STRING);
+    assert(json_get_node_type(value) == JSON_STRING);
     return json_get_buffer(json_get_region_(heap, value->value.ref.offset));
 }
 
