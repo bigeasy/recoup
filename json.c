@@ -37,7 +37,6 @@ struct json_node_s
 /*
     Baby steps:
 
-        * Create an interface for objects to integers.
         * Create a ring-buffer allocator.
         * Think of way to simplify push.
         * Objects as skip lists.
@@ -420,17 +419,12 @@ static void json_set_property_ (json_heap_t* heap, json_node_t* object, json_nod
 
 static json_node_t* json_construct_key (json_heap_t* heap, json_node_t* alloc, const char* name, json_node_t* value)
 {
-    json_node_t* region_node = json_list_pop(heap, alloc);
-    uint32_t region_offset = region_node->value.alloc.offset;
-    json_free_node(heap, region_node);
-
     json_node_t* key = json_list_pop(heap, alloc);
-    key->value.key.string = region_offset;
     json_set_type(key, JSON_KEY);
+
     key->next = json_get_node_offset(heap, value);
 
-    json_region_t* region = json_get_region_(heap, region_offset);
-    region->referrer = json_get_node_offset(heap, key);
+    json_region_t* region = json_get_region_(heap, key->value.key.string);
     strcpy(json_get_buffer(region), name);
 
     return key;
@@ -444,7 +438,6 @@ static int json_set_object_ (json_heap_t* heap, uint32_t object_offset, const ch
 
     json_alloc_push_node(heap);
     json_alloc_push_region(heap, strlen(name));
-    json_alloc_push_node(heap);
 
     uint32_t alloc_offset = json_alloc(heap);
     if (alloc_offset == 0) {
@@ -565,7 +558,6 @@ static int json_set_number_ (json_heap_t* heap, uint32_t object_offset, const ch
 
     json_alloc_push_node(heap);
     json_alloc_push_region(heap, strlen(name));
-    json_alloc_push_node(heap);
 
     uint32_t alloc_offset = json_alloc(heap);
     if (alloc_offset == 0) {
@@ -631,9 +623,7 @@ static int json_set_string_ (json_heap_t* heap, uint32_t object_offset, const ch
     assert(json_get_type(object) == JSON_OBJECT);
 
     json_alloc_push_region(heap, strlen(string));
-    json_alloc_push_node(heap);
     json_alloc_push_region(heap, strlen(name));
-    json_alloc_push_node(heap);
 
     uint32_t alloc_offset = json_alloc(heap);
     if (alloc_offset == 0) {
@@ -643,16 +633,9 @@ static int json_set_string_ (json_heap_t* heap, uint32_t object_offset, const ch
     json_node_t* alloc = json_get_node_(heap, alloc_offset);
 
     // **TODO** Assert taht the list is empty, dealloc pop list.
-    json_node_t* region_node = json_list_pop(heap, alloc);
-    uint32_t region_offset = region_node->value.alloc.offset;
-    json_free_node(heap, region_node);
-
     json_node_t* value = json_list_pop(heap, alloc);
-    value->value.ref.offset = region_offset;
     json_set_type(value, JSON_STRING);
-
-    json_region_t* region = json_get_region_(heap, region_offset);
-    region->referrer = json_get_node_offset(heap, value);
+    json_region_t* region = json_get_region_(heap, value->value.ref.offset);
     strcpy(json_get_buffer(region), string);
 
     json_node_t* key = json_construct_key(heap, alloc, name, value);
