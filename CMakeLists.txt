@@ -6,6 +6,7 @@ cmake_minimum_required (VERSION 3.16)
 
 add_library(json STATIC ../json.c)
 
+enable_testing()
 add_subdirectory(test)
 
 if(CJSON_COVERAGE)

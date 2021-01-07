@@ -4,113 +4,25 @@
 #include <string.h>
 #include <stdio.h>
 
-#define json_template(_properties)          \
-    (object_t[]) {{                         \
-        .properties = (property_t* []) { \
-            _properties \
-            NULL \
-        } \
-    }}
+#define foo .type = JSON_STRING
+#define json_key_string(key_, value_) .type = JSON_STRING, .key = key_, .value.string = value_
+#define json_key_string2(key_, value_)  { .type = JSON_STRING, .key = key_, .value.string = value_ }
+#define json_key_number(key_, value_) .type = JSON_NUMBER, .key = key_, .value.number = value_
+#define json_key_object(key_) .type = JSON_OBJECT, .key = key_, .value.object = (json_variant_t[])
+#define json_string_(value_) .type = JSON_STRING, .value.string = value_
+#define json_number(value_) .type = JSON_STRING, .value.number = value_
+#define json_object .type = JSON_OBJECT, .value.object = (json_variant_t[])
+#define json_end .type = JSON_END
 
-#define json_object_2             \
-    (object_t[]) {{                         \
-        .properties = NULL \
-    }}
-
-#define json_number(_key, _value) \
-    (property_t []) {{ .type = JSON_NUMBER, .key = _key, .value.number = _value }},
-
-#define json_object(_key, _properties) \
-    (property_t []) {{ \
-        .type = JSON_NUMBER, \
-        .key = _key, \
-        .value.object = (object_t[]) {{ \
-            .properties = (property_t* []) { \
-                _properties \
-                NULL \
-            } \
-        } \
-    }}
-
-/*
-static object_t* target = (object_t []) {{
-    .properties = NULL
-}};
-*/
-
-typedef struct object_alt_s object_x;
-
-typedef struct json_variant_s json_variant_t;
-struct json_variant_s {
-    uint32_t type;
-    const char* key;
-    union {
-        double number;
-        const char* string;
-        json_variant_t* object;
-        json_variant_t* array;
-    } value;
-};
-
-typedef struct json_field_s json_field_t;
-struct json_field_s
-{
-    uint32_t type;
-    uint32_t padding;
-    const char* key;
-    union {
-        const char* string;
-        double number;
-        uint64_t boolean;
-        json_field_t* object;
-    } value;
-};
-
-struct user_struct
-{
-    json_field_t first_name;
-    json_field_t last_name;
-};
-
-static object_t* template = (object_t []) {{
-    .properties = (property_t*[]) {
-        (property_t[]) {{ .type = JSON_STRING, .key = "string", .value.string = "string" }},
-        (property_t[]) {{ .type = JSON_NUMBER, .key = "number", .value.number = 0 }},
-        (property_t[]) {{
-            .type = JSON_OBJECT,
-            .key = "object",
-            .value.object = (object_t []) {}
-        }},
-        NULL
-    }
-}};
-
-static json_variant_t* redux = (json_variant_t[]) {
-    { .type = JSON_STRING, .key = "string", .value.string = "string" },
-    { .type = JSON_NUMBER, .key = "number", .value.number = 0 },
-    {
-        .type = JSON_ARRAY,
-        .key = "array",
-        .value.array = (json_variant_t[]) {
-            { .type = JSON_STRING, .value.string = "hello" },
-            { .type = JSON_END }
-        }
-    },
-    {
-        .type = JSON_OBJECT,
-        .key = "object",
-        .value.object = (json_variant_t[]) {
-            { .type = JSON_END }
-        }
-    },
-    { .type = JSON_END }
-};
+#define json_key_object_(key_, body_) (json_variant_t) { \
+    .type = JSON_OBJECT, .key = key_, .value.object = (json_variant_t[]) { \
+        body_\
+      , { json_end } } \
+}
 
 int main()
 {
     plan(5);
-
-    const json_variant_t* copy = redux;
 
     char memory[1024 * 1024];
     json_heap_t heap;
@@ -119,7 +31,7 @@ int main()
 
     json_heap_init(&heap, memory, sizeof(memory));
     json_root(&heap, &root);
-    ok(json_set_object(&root, "object") == 0, "set object");
+    ok(json_set_object(&root, "object", NULL) == 0, "set object");
 
     json_get_object(&root, &object, "object", NULL);
 
@@ -139,6 +51,16 @@ int main()
     json_get_string(&object, &string, "string", NULL);
 
     ok(strcmp(json_string(&string), "hello, world") == 0, "get and set string");
+
+    const char* key = "key";
+    const char* value = "value";
+
+    json_set_object(&object, "variant", (json_variant_t[]) {
+        { json_key_string("string", "hello, world") },
+        { json_key_number("number", 2) },
+        /* { json_key_object("object") { { json_end } } }, */
+        { json_end }
+    });
 
     return 0;
 }

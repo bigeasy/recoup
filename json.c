@@ -387,7 +387,8 @@ static int json_get_property (
     return 0;
 }
 
-static void json_set_property_ (json_heap_t* heap, json_node_t* object, json_node_t* key) {
+static void json_set_property_ (json_heap_t* heap, json_node_t* object, json_node_t* key)
+{
     const char* name = json_get_buffer(json_get_region_(heap, key->value.key.string));
 
     uint32_t referrer_offset, key_offset;
@@ -418,13 +419,88 @@ static json_node_t* json_construct_key (json_heap_t* heap, const char* name, jso
     return key;
 }
 
-static int json_set_object_ (json_heap_t* heap, uint32_t object_offset, const char* name)
+static json_node_t* json_construct_number (json_heap_t* heap, double number)
+{
+    json_node_t* value = json_alloc_pop(heap);
+    json_set_node_type(value, JSON_NUMBER);
+    value->value.number = number;
+    return value;
+}
+
+static void json_alloc_properties (json_heap_t* heap, json_variant_t* properties)
+{
+    json_variant_t* iterator = properties;
+    uint32_t index = 0;
+    do {
+        switch (iterator->type) {
+        case JSON_STRING:
+            json_alloc_push_region(heap, strlen(iterator->key) + 1);
+            json_alloc_push_region(heap, strlen(iterator->value.string) + 1);
+            break;
+        case JSON_NUMBER:
+            json_alloc_push_region(heap, strlen(iterator->key) + 1);
+            json_alloc_push_node(heap);
+            break;
+        }
+    } while ((iterator++)->type != JSON_END);
+}
+
+static json_node_t* json_construct_string (json_heap_t* heap, const char* string)
+{
+    json_node_t* value = json_alloc_pop(heap);
+    json_set_node_type(value, JSON_STRING);
+    json_region_t* region = json_get_region_(heap, value->value.ref.offset);
+    strcpy(json_get_buffer(region), string);
+    return value;
+}
+
+static void json_construct_properties (json_heap_t* heap, json_node_t* object, json_variant_t* properties)
+{
+    json_variant_t* iterator = properties;
+    while (iterator->type != JSON_END) {
+        iterator++;
+    }
+    uint32_t previous = object->value.list.head;
+    json_node_t* key;
+    json_node_t* value;
+    do {
+        iterator--;
+        switch (iterator->type) {
+        case JSON_STRING: {
+                value = json_construct_string(heap, iterator->value.string);
+                key = json_construct_key(heap, iterator->key, value);
+                value->next = previous;
+                previous = json_get_node_offset(heap, key);
+            }
+            break;
+        case JSON_NUMBER: {
+                value = json_construct_number(heap, iterator->value.number);
+                key = json_construct_key(heap, iterator->key, value);
+            }
+            break;
+        }
+        value->next = previous;
+        previous = json_get_node_offset(heap, key);
+    } while (iterator != properties);
+}
+
+// Could remove recursion with a parent and iterator pointer in the variant. We
+// don't plan on using this other than declaring the properties on the stack,
+// however so recursion is half dozen the other. Also, easier to read. Also,
+// easier to reuse the functions.
+
+static int json_set_object_ (json_heap_t* heap, uint32_t object_offset, const char* name, json_variant_t* properties)
 {
     json_node_t* object = json_get_node_(heap, object_offset);
 
     assert(json_get_node_type(object) == JSON_OBJECT);
 
-    json_alloc_push_region(heap, strlen(name));
+    json_alloc_push_region(heap, strlen(name) + 1);
+
+    if (properties != NULL) {
+        json_alloc_properties(heap, properties);
+    }
+
     json_alloc_push_node(heap);
 
     if (!json_alloc(heap)) {
@@ -435,6 +511,10 @@ static int json_set_object_ (json_heap_t* heap, uint32_t object_offset, const ch
     json_set_node_type(value, JSON_OBJECT);
     value->value.list.head = value->next = json_get_node_offset(heap, value);
 
+    if (properties != NULL) {
+        json_construct_properties(heap, object, properties);
+    }
+
     json_node_t* key = json_construct_key(heap, name, value);
 
     json_set_property_(heap, object, key);
@@ -442,9 +522,9 @@ static int json_set_object_ (json_heap_t* heap, uint32_t object_offset, const ch
     return 0;
 }
 
-int json_set_object (json_t* object, const char* name)
+int json_set_object (json_t* object, const char* name, json_variant_t* properties)
 {
-    return json_set_object_ (object->heap, object->offset, name);
+    return json_set_object_ (object->heap, object->offset, name, properties);
 }
 
 static void json_unlink_ref (json_t* ref) {
@@ -541,16 +621,14 @@ static int json_set_number_ (json_heap_t* heap, uint32_t object_offset, const ch
 
     assert(json_get_node_type(object) == JSON_OBJECT);
 
-    json_alloc_push_region(heap, strlen(name));
+    json_alloc_push_region(heap, strlen(name) + 1);
     json_alloc_push_node(heap);
 
     if (!json_alloc(heap)) {
         return 1;
     }
 
-    json_node_t* value = json_alloc_pop(heap);
-    json_set_node_type(value, JSON_NUMBER);
-    value->value.number = number;
+    json_node_t* value = json_construct_number(heap, number);
 
     json_node_t* key = json_construct_key(heap, name, value);
 
@@ -604,19 +682,14 @@ static int json_set_string_ (json_heap_t* heap, uint32_t object_offset, const ch
 
     assert(json_get_node_type(object) == JSON_OBJECT);
 
-    json_alloc_push_region(heap, strlen(name));
-    json_alloc_push_region(heap, strlen(string));
+    json_alloc_push_region(heap, strlen(name) + 1);
+    json_alloc_push_region(heap, strlen(string) + 1);
 
     if (!json_alloc(heap)) {
         return 1;
     }
 
-    // **TODO** Assert that the list is empty, dealloc pop list.
-    json_node_t* value = json_alloc_pop(heap);
-    json_set_node_type(value, JSON_STRING);
-    json_region_t* region = json_get_region_(heap, value->value.ref.offset);
-    strcpy(json_get_buffer(region), string);
-
+    json_node_t* value = json_construct_string(heap, string);
     json_node_t* key = json_construct_key(heap, name, value);
 
     value->value.ref.previous = json_get_node_offset(heap, key);
@@ -677,4 +750,14 @@ const char* _json_string (json_heap_t* heap, uint32_t string_offset)
 const char* json_string (json_t* string)
 {
     return _json_string(string->heap, string->offset);
+}
+
+static int json_set_variant_ (json_heap_t* heap, uint32_t object_offset, const char * name, json_variant_t* variant)
+{
+    return 0;
+}
+
+int json_set_variant (json_t* object, const char * name, json_variant_t* variant)
+{
+    return json_set_variant_(object->heap, object->offset, name, variant);
 }

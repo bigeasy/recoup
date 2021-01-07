@@ -67,6 +67,20 @@ struct object_s
     property_t** properties;
 };
 
+typedef struct json_variant_s json_variant_t;
+struct json_variant_s {
+    uint32_t type;
+    const char* key;
+    union {
+        const char* string;
+        double number;
+        uint64_t boolean;
+        json_variant_t* object;
+        json_variant_t* array;
+    } value;
+    uint32_t index;
+    json_variant_t* parent;
+};
 
 void json_heap_init(json_heap_t* json_heap, void* memory, size_t length);
 
@@ -74,7 +88,7 @@ void json_heap_copacetic(json_heap_t* json_heap);
 
 void json_root(json_heap_t*, json_t*);
 
-int json_set_object(json_t*, const char*);
+int json_set_object(json_t*, const char*, json_variant_t*);
 
 int json_set_number(json_t* object, const char* name, double number);
 
@@ -87,3 +101,5 @@ int json_get_object (json_t* object, json_t* result, ...);
 void json_get_string (json_t* object, json_t* string, ...);
 
 const char* json_string (json_t* string);
+
+int json_set_variant (json_t* object, const char * name, json_variant_t* variant);
