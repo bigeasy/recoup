@@ -1,10 +1,10 @@
-project(cjson)
+project(recoup)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 cmake_minimum_required (VERSION 3.16)
 
-add_library(json STATIC ../json.c)
+add_library(recoup STATIC ../recoup.c)
 
 enable_testing()
 add_subdirectory(test)
@@ -17,6 +17,6 @@ if(CJSON_COVERAGE)
         include(CodeCoverage)
         setup_target_for_coverage(
             NAME coverage
-            EXECUTABLE build/json_test)
+            EXECUTABLE build/recoup_test)
     endif()
 endif()
