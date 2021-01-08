@@ -1,2 +1,4 @@
 /c/make
 /c/xcode
+/rust/Cargo.lock
+/rust/target
