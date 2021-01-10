@@ -42,6 +42,8 @@ struct recoup_node_s
 #define recoup_get_node_type(node) (recoup_get_node_packed_field(node, 27, 5))
 #define recoup_set_node_alloc_failure(node, value) (recoup_set_node_packed_field(node, 26, 1, value))
 #define recoup_get_node_alloc_failure(node) (recoup_get_node_packed_field(node, 26, 1))
+#define recoup_set_node_page_size(node, value) (recoup_set_node_packed_field(node, 19, 8, value))
+#define recoup_get_node_page_size(node) (recoup_get_node_packed_field(node, 19, 8))
 
 // Debugger steppable for now, inline function later.
 
@@ -407,6 +409,9 @@ static void recoup_set_property_ (recoup_heap_t* heap, recoup_node_t* object, re
         value->link.next = referrer->link.next;
         referrer->link.next = recoup_get_node_offset(heap, key);
     }
+
+    const uint32_t size = recoup_get_node_page_size(object);
+    recoup_set_node_page_size(object, size + 1);
 }
 
 static recoup_node_t* recoup_construct_key (recoup_heap_t* heap, const char* name, recoup_node_t* value)
@@ -513,6 +518,7 @@ static int recoup_set_object_ (recoup_heap_t* heap, uint32_t object_offset, cons
 
     recoup_node_t* value = recoup_alloc_pop(heap);
     recoup_set_node_type(value, JSON_OBJECT);
+    recoup_set_node_page_size(value, 0);
     value->value.list.head = value->link.next = recoup_get_node_offset(heap, value);
 
     if (properties != NULL) {
