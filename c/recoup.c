@@ -13,7 +13,10 @@ typedef struct recoup_node_s recoup_node_t;
 struct recoup_node_s
 {
     uint32_t packed;
-    uint32_t next;
+    union {
+        uint32_t next;
+        uint32_t key;
+    } link;
     union {
         struct {
             uint32_t head;
@@ -24,6 +27,7 @@ struct recoup_node_s
         } ref;
         struct {
             uint32_t string;
+            uint32_t value;
         } key;
         struct {
             uint32_t offset;
@@ -103,7 +107,7 @@ static uint32_t recoup_alloc_node (recoup_heap_t* heap)
     heap->header->top += 2;
     recoup_node_t* node = recoup_get_node_(heap, allocated);
     node->packed = 0;
-    node->next = 0;
+    node->link.next = 0;
     node->value.integer = 0;
     return allocated;
 }
@@ -120,7 +124,7 @@ static recoup_node_t* recoup_get_system_node (recoup_heap_t* heap, uint32_t type
     recoup_node_t* node = recoup_get_node_(heap, root_offset);
 
     while (recoup_get_node_type(node) != type) {
-        node = recoup_get_node_(heap, node->next);
+        node = recoup_get_node_(heap, node->link.next);
     }
 
     return node;
@@ -145,14 +149,14 @@ void recoup_heap_init(recoup_heap_t* heap, void* memory, size_t length)
     recoup_node_t* stack = recoup_get_node_(heap, stack_offset);
 
     recoup_set_node_type(root, JSON_OBJECT);
-    root->next = free_list_offset;
+    root->link.next = free_list_offset;
     root->value.list.head = root_offset;
 
     recoup_set_node_type(free_list, JSON_FREE_LIST);
-    free_list->next = stack_offset;
+    free_list->link.next = stack_offset;
 
     recoup_set_node_type(stack, JSON_STACK);
-    stack->next = root_offset;
+    stack->link.next = root_offset;
     stack->value.list.head = stack_offset;
 }
 
@@ -205,12 +209,12 @@ static int recoup_alloc_region (recoup_heap_t* heap, uint32_t referrer_offset, u
 
 static void recoup_list_link (recoup_heap_t* heap, recoup_node_t* list, recoup_node_t* node)
 {
-    node->next = list->value.list.head;
+    node->link.next = list->value.list.head;
     list->value.list.head = recoup_get_node_offset(heap, node);
 }
 
 static recoup_node_t* recoup_alloc_push (recoup_heap_t* heap) {
-    uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->next;
+    uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->link.next;
     recoup_node_t* alloc = recoup_get_node_(heap, alloc_offset);
 
     const uint32_t node_offset = heap->header->top;
@@ -241,7 +245,7 @@ static void recoup_alloc_push_region (recoup_heap_t* heap, uint32_t bytes)
         node->value.alloc.bytes = bytes;
         node->value.alloc.offset = recoup_alloc_region(heap, recoup_get_node_offset(heap, node), node->value.alloc.bytes);
         if (node->value.alloc.offset == 0) {
-            uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->next;
+            uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->link.next;
             recoup_node_t* alloc = recoup_get_node_(heap, alloc_offset);
             recoup_set_node_alloc_failure(alloc, 1);
         }
@@ -252,27 +256,27 @@ static void recoup_free_node (recoup_heap_t* heap, recoup_node_t* node)
 {
     uint32_t node_offset = recoup_get_node_offset(heap, node);
     recoup_node_t* root = recoup_get_system_node(heap, JSON_OBJECT);
-    recoup_node_t* free_list = recoup_get_node_(heap, root->next);
+    recoup_node_t* free_list = recoup_get_node_(heap, root->link.next);
     recoup_list_link(heap, free_list, node);
 }
 
 static void recoup_alloc_unwind (recoup_heap_t* heap)
 {
-    uint32_t stack_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->next;
+    uint32_t stack_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->link.next;
     recoup_node_t* stack = recoup_get_node_(heap, stack_offset);
 
     recoup_node_t* root = recoup_get_node_(heap, wordsof(sizeof(recoup_heap_header_t)));
-    uint32_t free_list_offset = root->next;
-    recoup_node_t* free_list = recoup_get_node_(heap, root->next);
+    uint32_t free_list_offset = root->link.next;
+    recoup_node_t* free_list = recoup_get_node_(heap, root->link.next);
 
     while (stack->value.list.head != stack_offset) {
         uint32_t top_offset = stack->value.list.head;
         recoup_node_t* top = recoup_get_node_(heap, top_offset);
-        uint32_t next_offset = top->next;
+        uint32_t next_offset = top->link.next;
         if (free_list->value.list.head == free_list_offset) {
-            top->next = free_list_offset;
+            top->link.next = free_list_offset;
         } else {
-            top->next = free_list->value.list.head;
+            top->link.next = free_list->value.list.head;
         }
         free_list->value.list.head = top_offset;
         stack->value.list.head = next_offset;
@@ -293,7 +297,7 @@ static recoup_node_t* recoup_list_pop (recoup_heap_t* heap, recoup_node_t* list)
         return NULL;
     }
     recoup_node_t* node = recoup_get_node_(heap, list->value.list.head);
-    list->value.list.head = node->next;
+    list->value.list.head = node->link.next;
     return node;
 }
 
@@ -301,19 +305,19 @@ static void recoup_list_unlink (recoup_heap_t* heap, recoup_node_t* list, recoup
 {
     uint32_t node_offset = recoup_get_node_offset(heap, node);
     if (list->value.list.head == node_offset) {
-        list->value.list.head = node->next;
+        list->value.list.head = node->link.next;
     } else {
         recoup_node_t* iterator = recoup_get_node_(heap, list->value.list.head);
-        while (iterator->next != node->next) {
+        while (iterator->link.next != node->link.next) {
             iterator = recoup_get_node_(heap, list->value.list.head);
         }
-        iterator->next = node->next;
+        iterator->link.next = node->link.next;
     }
 }
 
 static int recoup_alloc (recoup_heap_t* heap)
 {
-    uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->next;
+    uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->link.next;
     recoup_node_t* alloc = recoup_get_node_(heap, alloc_offset);
 
     if (recoup_get_node_alloc_failure(alloc)) {
@@ -326,7 +330,7 @@ static int recoup_alloc (recoup_heap_t* heap)
 
 static recoup_node_t* recoup_alloc_pop (recoup_heap_t* heap)
 {
-    uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->next;
+    uint32_t alloc_offset = recoup_get_system_node(heap, JSON_FREE_LIST)->link.next;
     recoup_node_t* alloc = recoup_get_node_(heap, alloc_offset);
     recoup_node_t* top = recoup_list_pop(heap, alloc);
     top->packed = 0;
@@ -378,10 +382,9 @@ static int recoup_get_property (
         } else if (compare > 0) {
             break;
         } else {
-            *referrer_offset = iterator->next;
-            iterator = recoup_get_node_(heap, iterator->next);
-            key_offset = iterator->next;
-            iterator = recoup_get_node_(heap, iterator->next);
+            *referrer_offset = key_offset;
+            key_offset = iterator->link.next;
+            iterator = recoup_get_node_(heap, iterator->link.next);
         }
     }
     return 0;
@@ -394,15 +397,15 @@ static void recoup_set_property_ (recoup_heap_t* heap, recoup_node_t* object, re
     uint32_t referrer_offset, key_offset;
     recoup_get_property(heap, recoup_get_node_offset(heap, object), name, &referrer_offset, &key_offset);
 
-    recoup_node_t* value = recoup_get_node_(heap, key->next);
+    recoup_node_t* value = recoup_get_node_(heap, key->link.next);
 
     if (recoup_get_node_offset(heap, object) == referrer_offset) {
-        value->next = referrer_offset;
+        value->link.next = referrer_offset;
         object->value.list.head = recoup_get_node_offset(heap, key);
     } else {
         recoup_node_t* referrer = recoup_get_node_(heap, referrer_offset);
-        value->next = referrer->next;
-        referrer->next = recoup_get_node_offset(heap, key);
+        value->link.next = referrer->link.next;
+        referrer->link.next = recoup_get_node_offset(heap, key);
     }
 }
 
@@ -411,7 +414,8 @@ static recoup_node_t* recoup_construct_key (recoup_heap_t* heap, const char* nam
     recoup_node_t* key = recoup_alloc_pop(heap);
     recoup_set_node_type(key, JSON_KEY);
 
-    key->next = recoup_get_node_offset(heap, value);
+    key->value.key.value = recoup_get_node_offset(heap, value);
+    value->link.key = recoup_get_node_offset(heap, key);
 
     recoup_region_t* region = recoup_get_region_(heap, key->value.key.string);
     strcpy(recoup_get_buffer(region), name);
@@ -469,7 +473,7 @@ static void recoup_construct_properties (recoup_heap_t* heap, recoup_node_t* obj
         case JSON_STRING: {
                 value = recoup_construct_string(heap, iterator->value.string);
                 key = recoup_construct_key(heap, iterator->key, value);
-                value->next = previous;
+                value->link.next = previous;
                 previous = recoup_get_node_offset(heap, key);
             }
             break;
@@ -479,7 +483,7 @@ static void recoup_construct_properties (recoup_heap_t* heap, recoup_node_t* obj
             }
             break;
         }
-        value->next = previous;
+        value->link.next = previous;
         previous = recoup_get_node_offset(heap, key);
     } while (iterator != properties);
 }
@@ -509,7 +513,7 @@ static int recoup_set_object_ (recoup_heap_t* heap, uint32_t object_offset, cons
 
     recoup_node_t* value = recoup_alloc_pop(heap);
     recoup_set_node_type(value, JSON_OBJECT);
-    value->value.list.head = value->next = recoup_get_node_offset(heap, value);
+    value->value.list.head = value->link.next = recoup_get_node_offset(heap, value);
 
     if (properties != NULL) {
         recoup_construct_properties(heap, object, properties);
@@ -603,8 +607,7 @@ int recoup_get_object (recoup_t* object, recoup_t* result, ...)
     }
 
     recoup_node_t* key = recoup_get_node_(heap, key_offset);
-
-    recoup_node_t* value = recoup_get_node_(heap, key->next);
+    recoup_node_t* value = recoup_get_node_(heap, key->value.key.value);
 
     if (recoup_get_node_type(value) != JSON_OBJECT) {
         return 0;
@@ -629,7 +632,6 @@ static int recoup_set_number_ (recoup_heap_t* heap, uint32_t object_offset, cons
     }
 
     recoup_node_t* value = recoup_construct_number(heap, number);
-
     recoup_node_t* key = recoup_construct_key(heap, name, value);
 
     recoup_set_property_(heap, object, key);
@@ -662,8 +664,7 @@ recoup_number_t recoup_get_number (recoup_t* object, ...)
     }
 
     recoup_node_t* key_node = recoup_get_node_(heap, key_offset);
-
-    recoup_node_t* value_node = recoup_get_node_(heap, key_node->next);
+    recoup_node_t* value_node = recoup_get_node_(heap, key_node->value.key.value);
 
     if (recoup_get_node_type(value_node) != JSON_NUMBER) {
         err = 1;
@@ -691,8 +692,6 @@ static int recoup_set_string_ (recoup_heap_t* heap, uint32_t object_offset, cons
 
     recoup_node_t* value = recoup_construct_string(heap, string);
     recoup_node_t* key = recoup_construct_key(heap, name, value);
-
-    value->value.ref.previous = recoup_get_node_offset(heap, key);
 
     recoup_set_property_(heap, object, key);
 
@@ -725,8 +724,7 @@ void recoup_get_string (recoup_t* object, recoup_t* ref, ...)
     }
 
     recoup_node_t* key = recoup_get_node_(heap, key_offset);
-
-    recoup_node_t* value = recoup_get_node_(heap, key->next);
+    recoup_node_t* value = recoup_get_node_(heap, key->value.key.value);
 
     // **TODO** Do we coerce the way JSON does?
     uint32_t field = 0;
