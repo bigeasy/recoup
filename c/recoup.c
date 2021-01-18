@@ -38,6 +38,16 @@ struct recoup_node_s
     } value;
 };
 
+typedef union recoup_sought_u recoup_sought_t;
+
+union recoup_sought_u
+{
+    uint32_t offset;
+    const char* name;
+};
+
+typedef int (*recoup_comparator_t)(recoup_heap_t* heap, recoup_sought_t left, recoup_node_t* right);
+
 #define recoup_set_node_type(node, value) (recoup_set_node_packed_field(node, 27, 5, value))
 #define recoup_get_node_type(node) (recoup_get_node_packed_field(node, 27, 5))
 #define recoup_set_node_alloc_failure(node, value) (recoup_set_node_packed_field(node, 26, 1, value))
@@ -360,7 +370,7 @@ static void* recoup_get_buffer (recoup_region_t* region)
 }
 
 static int recoup_get_property (
-    recoup_heap_t* heap, const uint32_t object_offset, const char* name,
+    recoup_heap_t* heap, recoup_comparator_t comparator, const uint32_t object_offset, recoup_sought_t sought,
     uint32_t* referrer_offset, uint32_t* found_offset
 ) {
     int err;
@@ -371,13 +381,7 @@ static int recoup_get_property (
     *referrer_offset = object_offset;
     key_offset = object->value.list.head;
     while (iterator != object) {
-        recoup_region_t* region;
-        err = recoup_get_region(heap, iterator->value.key.string, &region);
-        if (err != 0) {
-            return err;
-        }
-        const char* current_name = recoup_get_buffer(region);
-        int compare = strcmp(name, current_name);
+        int compare = comparator(heap, sought, iterator);
         if (compare == 0) {
             *found_offset = key_offset;
             break;
@@ -392,26 +396,38 @@ static int recoup_get_property (
     return 0;
 }
 
-static void recoup_set_property_ (recoup_heap_t* heap, recoup_node_t* object, recoup_node_t* key)
+static int recoup_compare_key (recoup_heap_t* heap, recoup_sought_t left, recoup_node_t* right)
 {
-    const char* name = recoup_get_buffer(recoup_get_region_(heap, key->value.key.string));
+    recoup_region_t* right_region = recoup_get_region_(heap, right->value.key.string);
+    return strcmp(left.name, recoup_get_buffer(right_region));
+}
 
+static int recoup_compare_offset (recoup_heap_t* heap, void* left, recoup_node_t* right)
+{
+    return *((uint32_t*) left) - recoup_get_node_offset(heap, right);
+}
+
+static void recoup_set_property_ (recoup_heap_t* heap, recoup_node_t* list, recoup_node_t* key)
+{
+    void* name = recoup_get_buffer(recoup_get_region_(heap, key->value.key.string));
+
+    recoup_sought_t sought = { .name = name };
     uint32_t referrer_offset, key_offset;
-    recoup_get_property(heap, recoup_get_node_offset(heap, object), name, &referrer_offset, &key_offset);
+    recoup_get_property(heap, recoup_compare_key, recoup_get_node_offset(heap, list), sought, &referrer_offset, &key_offset);
 
     recoup_node_t* value = recoup_get_node_(heap, key->link.next);
 
-    if (recoup_get_node_offset(heap, object) == referrer_offset) {
+    if (recoup_get_node_offset(heap, list) == referrer_offset) {
         value->link.next = referrer_offset;
-        object->value.list.head = recoup_get_node_offset(heap, key);
+        list->value.list.head = recoup_get_node_offset(heap, key);
     } else {
         recoup_node_t* referrer = recoup_get_node_(heap, referrer_offset);
         value->link.next = referrer->link.next;
         referrer->link.next = recoup_get_node_offset(heap, key);
     }
 
-    const uint32_t size = recoup_get_node_page_size(object);
-    recoup_set_node_page_size(object, size + 1);
+    const uint32_t size = recoup_get_node_page_size(list);
+    recoup_set_node_page_size(list, size + 1);
 }
 
 static recoup_node_t* recoup_construct_key (recoup_heap_t* heap, const char* name, recoup_node_t* value)
@@ -569,7 +585,8 @@ static int recoup_get_path (recoup_heap_t* heap, uint32_t object_offset, uint32_
             break;
         }
         parent_offset = child_offset;
-        err = recoup_get_property(heap, parent_offset, name, &referrer_offset, &child_offset);
+        recoup_sought_t sought = { .name = name };
+        err = recoup_get_property(heap, recoup_compare_key, parent_offset, sought, &referrer_offset, &child_offset);
         if (err != 0) {
             break;
         }
